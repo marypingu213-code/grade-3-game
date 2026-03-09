@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="zh-TW" class="h-full">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>生字語詞拉霸機 - 多人搶答版</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <style>
+        body { font-family: 'Microsoft JhengHei', sans-serif; overflow: hidden; touch-action: manipulation; }
+        .buzzer-btn { 
+            background: radial-gradient(circle at 30% 30%, #ff6b6b, #c0392b);
+            box-shadow: 0 10px 0 #96281b, 0 15px 20px rgba(0,0,0,0.4);
+            transition: all 0.1s;
+        }
+        .buzzer-btn:active:not(:disabled) { transform: translateY(10px); box-shadow: 0 0 0 #96281b, 0 5px 10px rgba(0,0,0,0.4); }
+        .buzzer-btn:disabled { filter: grayscale(100%); cursor: not-allowed; opacity: 0.6; transform: translateY(5px); box-shadow: none; }
+        @keyframes popIn { 0% { transform: scale(0); opacity: 0; } 70% { transform: scale(1.2); } 100% { transform: scale(1); opacity: 1; } }
+        .pop-in { animation: popIn 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
+        .slot-spin { filter: blur(4px); opacity: 0.7; transform: translateY(-10px); }
+    </style>
+</head>
+<body class="h-full bg-gray-100 text-gray-800">
+
+    <div id="app" class="w-full h-full flex flex-col items-center justify-center">
+        <div id="loadingScreen" class="text-2xl font-bold">系統初始化中...</div>
+    </div>
+
+    <template id="tpl-landing">
+        <div class="flex flex-col gap-8 items-center p-8 bg-white rounded-3xl shadow-xl max-w-lg w-full text-center">
+            <h1 class="text-4xl font-bold text-gray-800 mb-2">🎰 語詞拉霸機</h1>
+            <p class="text-gray-500 mb-4">超刺激的課堂單字搶答遊戲</p>
+            <button onclick="initTeacher()" class="w-full py-6 text-2xl font-bold text-white bg-blue-500 rounded-2xl shadow-lg hover:bg-blue-600 transition">
+                我是老師 (建立房間)
+            </button>
+            <div class="w-full border-t border-gray-200"></div>
+            <div class="w-full text-center text-gray-500 text-sm italic">學生請掃描老師提供的 QR Code 加入</div>
+        </div>
+    </template>
+
+    <template id="tpl-teacher">
+        <div class="w-full h-full flex p-2 gap-2 overflow-hidden bg-gray-200">
+            <div class="flex-1 relative bg-gray-800 rounded-2xl shadow-inner flex flex-col items-center justify-center p-8 overflow-hidden border-8 border-gray-700">
+                <div class="w-full max-w-3xl bg-white rounded-3xl border-[12px] border-gray-300 shadow-[0_0_60px_rgba(255,255,255,0.2)] p-10 flex items-center justify-center" style="height: 40vh;">
+                    <div id="slotDisplay" class="text-7xl md:text-9xl font-black text-gray-800 tracking-widest text-center">
+                        準備開始
+                    </div>
+                </div>
+                <div id="winnerArea" class="hidden absolute inset-0 bg-black/70 flex items-center justify-center z-50 backdrop-blur-sm">
+                    <div class="bg-red-600 text-white px-12 py-8 rounded-3xl shadow-2xl text-5xl md:text-7xl font-bold border-4 border-white pop-in text-center flex flex-col gap-4">
+                        <span id="winnerName" class="text-yellow-300"></span>
+                        <span>搶答成功！</span>
+                        <button onclick="game.resetRound()" class="mt-4 text-xl bg-white text-red-600 py-2 rounded-full">關閉</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="w-80 bg-white rounded-2xl shadow-lg flex flex-col p-4 overflow-hidden border-2 border-gray-300">
+                <div class="mb-4 text-center">
+                    <h2 class="text-2xl font-black text-gray-800 tracking-wider">控制台</h2>
+                    <div id="qrcode" class="flex justify-center my-3 p-2 bg-white border-2 border-dashed border-gray-300 rounded-xl"></div>
+                    <div class="text-xs font-bold text-blue-600 bg-blue-50 py-1 rounded-lg break-all" id="roomIdDisplay">正在取得 ID...</div>
+                </div>
+                <div class="mb-4">
+                    <textarea id="wordInput" class="w-full h-24 p-2 border-2 border-gray-200 rounded-xl text-sm outline-none resize-none" placeholder="輸入單字，逗號分隔">蘋果,香蕉,大象,學校,太陽</textarea>
+                    <button onclick="updateWords()" class="mt-2 w-full py-2 bg-indigo-100 text-indigo-700 hover:bg-indigo-200 rounded-lg text-sm font-bold transition">更新題庫</button>
+                </div>
+                <div class="flex-1 overflow-y-auto mb-4 border-2 border-gray-100 rounded-xl p-2 bg-gray-50">
+                    <h3 class="font-bold text-sm text-gray-600 mb-2 border-b">已連線學生 (<span id="studentCount">0</span>)</h3>
+                    <div id="studentList" class="space-y-1 text-sm"></div>
+                </div>
+                <div class="flex flex-col gap-2">
+                    <button id="spinBtn" onclick="game.teacherSpin()" class="py-4 bg-green-500 text-white rounded-xl font-black text-2xl shadow-[0_6px_0_#16a34a]">🎰 拉霸！</button>
+                </div>
+            </div>
+        </div>
+    </template>
+
+    <template id="tpl-student">
+        <div class="w-full h-full flex flex-col items-center justify-between p-6 bg-slate-900 text-white">
+            <div class="w-full flex justify-between items-center bg-white/10 p-3 rounded-2xl">
+                <div class="text-lg">代號: <span id="myStudentName" class="font-bold text-yellow-400"></span></div>
+                <div id="connStatus" class="text-sm px-2 py-1 rounded bg-green-600">連線正常</div>
+            </div>
+            <div class="flex-1 flex flex-col items-center justify-center w-full">
+                <div id="studentMessage" class="text-xl text-gray-400 mb-4">等待老師...</div>
+                <div id="studentWord" class="text-6xl font-black text-yellow-400 hidden pop-in"></div>
+            </div>
+            <button id="buzzerBtn" onclick="game.studentBuzz()" disabled class="buzzer-btn w-64 h-64 rounded-full text-5xl font-black text-white border-8 border-red-900 mb-10">
+                搶答
+            </button>
+        </div>
+    </template>
+
+    <script>
+        let peer, conn;
+        let students = {};
+        const app = document.getElementById('app');
+        const urlParams = new URLSearchParams(window.location.search);
+        const roomFromUrl = urlParams.get('room');
+
+        // 初始化檢查
+        window.onload = () => {
+            if (roomFromUrl) {
+                initStudent(roomFromUrl);
+            } else {
+                render('tpl-landing');
+            }
+        };
+
+        function render(templateId) {
+            const tpl = document.getElementById(templateId);
+            app.innerHTML = '';
+            app.appendChild(tpl.content.cloneNode(true));
+        }
+
+        // --- 老師邏輯 ---
+        function initTeacher() {
+            render('tpl-teacher');
+            peer = new Peer();
+            
+            peer.on('open', id => {
+                const roomUrl = `${window.location.origin}${window.location.pathname}?room=${id}`;
+                document.getElementById('roomIdDisplay').innerText = `房間ID: ${id}`;
+                new QRCode(document.getElementById("qrcode"), { text: roomUrl, width: 128, height: 128 });
+            });
+
+            peer.on('connection', c => {
+                c.on('open', () => {
+                    const studentId = c.peer.substring(0, 5);
+                    students[c.peer] = { conn: c, name: studentId };
+                    updateStudentList();
+                    c.send({ type: 'WELCOME', name: studentId });
+                });
+                c.on('data', data => {
+                    if (data.type === 'BUZZ') game.handleBuzz(c.peer);
+                });
+                c.on('close', () => {
+                    delete students[c.peer];
+                    updateStudentList();
+                });
+            });
+        }
+
+        function updateStudentList() {
+            const list = document.getElementById('studentList');
+            const count = document.getElementById('studentCount');
+            if (!list) return;
+            list.innerHTML = Object.values(students).map(s => `<div class="bg-white p-2 rounded shadow-sm border-l-4 border-blue-500">${s.name}</div>`).join('');
+            count.innerText = Object.keys(students).length;
+        }
+
+        function updateWords() {
+            const input = document.getElementById('wordInput').value;
+            game.words = input.split(/[,，\n]/).filter(w => w.trim() !== "");
+            alert('題庫已更新，共 ' + game.words.length + ' 個詞彙');
+        }
+
+        // --- 學生邏輯 ---
+        function initStudent(roomId) {
+            render('tpl-student');
+            peer = new Peer();
+            
+            peer.on('open', (id) => {
+                conn = peer.connect(roomId);
+                conn.on('data', data => {
+                    if (data.type === 'WELCOME') {
+                        document.getElementById('myStudentName').innerText = data.name;
+                    }
+                    if (data.type === 'SPIN_START') {
+                        document.getElementById('studentMessage').innerText = "拉霸轉動中...";
+                        document.getElementById('studentWord').classList.add('hidden');
+                        document.getElementById('buzzerBtn').disabled = true;
+                    }
+                    if (data.type === 'SPIN_STOP') {
+                        document.getElementById('studentMessage').innerText = "快搶答！";
+                        document.getElementById('studentWord').innerText = data.word;
+                        document.getElementById('studentWord').classList.remove('hidden');
+                        document.getElementById('buzzerBtn').disabled = false;
+                    }
+                    if (data.type === 'WINNER_IS') {
+                        document.getElementById('studentMessage').innerText = data.name + " 搶到了！";
+                        document.getElementById('buzzerBtn').disabled = true;
+                    }
+                    if (data.type === 'RESET') {
+                        document.getElementById('studentMessage').innerText = "等待下一題...";
+                        document.getElementById('studentWord').classList.add('hidden');
+                        document.getElementById('buzzerBtn').disabled = true;
+                    }
+                });
+                conn.on('close', () => {
+                    alert('與老師連線中斷');
+                    window.location.href = window.location.pathname;
+                });
+            });
+        }
+
+        // --- 遊戲控制中心 ---
+        const game = {
+            words: ["蘋果", "香蕉", "大象", "學校", "太陽"],
+            isSpinning: false,
+            winner: null,
+
+            teacherSpin() {
+                if (this.isSpinning) return;
+                this.isSpinning = true;
+                this.winner = null;
+                
+                // 通知所有學生
+                Object.values(students).forEach(s => s.conn.send({ type: 'SPIN_START' }));
+                
+                const display = document.getElementById('slotDisplay');
+                display.classList.add('slot-spin');
+                
+                let count = 0;
+                const interval = setInterval(() => {
+                    display.innerText = this.words[Math.floor(Math.random() * this.words.length)];
+                    count++;
+                    if (count > 20) {
+                        clearInterval(interval);
+                        const finalWord = display.innerText;
+                        display.classList.remove('slot-spin');
+                        this.isSpinning = false;
+                        
+                        // 語音朗讀
+                        const utter = new SpeechSynthesisUtterance(finalWord);
+                        utter.lang = 'zh-TW';
+                        window.speechSynthesis.speak(utter);
+
+                        Object.values(students).forEach(s => s.conn.send({ type: 'SPIN_STOP', word: finalWord }));
+                    }
+                }, 100);
+            },
+
+            studentBuzz() {
+                if (conn) conn.send({ type: 'BUZZ' });
+            },
+
+            handleBuzz(peerId) {
+                if (this.winner) return;
+                this.winner = students[peerId].name;
+                document.getElementById('winnerName').innerText = this.winner;
+                document.getElementById('winnerArea').classList.remove('hidden');
+                Object.values(students).forEach(s => s.conn.send({ type: 'WINNER_IS', name: this.winner }));
+            },
+
+            resetRound() {
+                this.winner = null;
+                document.getElementById('winnerArea').classList.add('hidden');
+                document.getElementById('slotDisplay').innerText = "準備開始";
+                Object.values(students).forEach(s => s.conn.send({ type: 'RESET' }));
+            }
+        };
+    </script>
+</body>
+</html>
